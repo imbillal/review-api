@@ -38,7 +38,7 @@ export function signAuthToken(
 export function verifyAuthToken(token: string): AuthPayload | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
-  const [h, b, s] = parts;
+  const [h, b, s] = parts as [string, string, string];
   const signingInput = `${h}.${b}`;
   const expected = b64url(
     crypto.createHmac("sha256", secret()).update(signingInput).digest(),
