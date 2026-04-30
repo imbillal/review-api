@@ -13,15 +13,15 @@ import notificationPrefs from "@/routes/notification-prefs";
 import proxy from "@/routes/proxy";
 import render from "@/routes/render";
 
-const WEB_ORIGIN_RAW = process.env.WEB_ORIGIN ?? "http://localhost:3100";
-const allowedOrigins = WEB_ORIGIN_RAW.split(",").map((s) => s.trim()).filter(Boolean);
-
 export function createApp(): Express {
   const app = express();
 
+  // CORS: allow all origins. Auth is via Bearer header, so credentials reflection
+  // isn't strictly required, but `origin: true` keeps it permissive in case any
+  // legacy cookie path remains.
   app.use(
     cors({
-      origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
+      origin: true,
       credentials: true,
     }),
   );
