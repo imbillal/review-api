@@ -1,0 +1,296 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  REVIEWER
+}
+
+enum InviteScope {
+  ORG
+  PROJECT
+  DOCUMENT
+}
+
+enum DocumentType {
+  PDF
+  WEBSITE
+}
+
+enum SnapshotStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum CommentStatus {
+  OPEN
+  RESOLVED
+}
+
+enum WorkStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum NotificationType {
+  COMMENT_CREATED
+  COMMENT_RESOLVED
+}
+
+model User {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  email           String    @unique
+  name            String
+  avatarUrl       String?
+  passwordHash    String?
+  emailVerified   DateTime?
+  image           String?
+  createdAt       DateTime  @default(now())
+
+  accounts        Account[]
+  sessions        Session[]
+  ownedOrgs       Organization[] @relation("OrgOwner")
+  orgMemberships  OrgMember[]
+  projectMemberships ProjectMember[]
+  documentMemberships DocumentMember[]
+  sentInvites     Invite[]  @relation("Inviter")
+  passwordResets  PasswordReset[]
+  notifications        Notification[]
+  notificationPrefs    NotificationPreference[]
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordReset {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String    @db.ObjectId
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Organization {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  slug      String   @unique
+  ownerId   String   @db.ObjectId
+  createdAt DateTime @default(now())
+
+  owner     User         @relation("OrgOwner", fields: [ownerId], references: [id])
+  members   OrgMember[]
+  projects  Project[]
+}
+
+model OrgMember {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  orgId      String   @db.ObjectId
+  role       Role
+  invitedBy  String?  @db.ObjectId
+  joinedAt   DateTime @default(now())
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+model Project {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  orgId       String    @db.ObjectId
+  name        String
+  slug        String
+  createdById String    @db.ObjectId
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  status      WorkStatus @default(TODO)
+
+  org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  members     ProjectMember[]
+  documents   Document[]
+
+  @@unique([orgId, slug])
+  @@index([orgId])
+}
+
+model ProjectMember {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  projectId  String   @db.ObjectId
+  role       Role
+  invitedBy  String?  @db.ObjectId
+  joinedAt   DateTime @default(now())
+
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+}
+
+model Document {
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  projectId      String          @db.ObjectId
+  type           DocumentType
+  title          String
+  storageKey     String?
+  bundleKey      String?
+  sourceUrl      String?
+  pageCount      Int?
+  thumbnailKey   String?
+  sizeBytes      Int?
+  mimeType       String?
+  viewportWidth  Int?
+  viewportHeight Int?
+  snapshotStatus SnapshotStatus  @default(PENDING)
+  captureError   String?
+  createdById    String          @db.ObjectId
+  createdAt      DateTime        @default(now())
+  lastCapturedAt DateTime?
+  status         WorkStatus      @default(TODO)
+  deletedAt      DateTime?
+
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  members        DocumentMember[]
+  comments       Comment[]
+
+  @@index([projectId])
+}
+
+model Comment {
+  id               String        @id @default(auto()) @map("_id") @db.ObjectId
+  documentId       String        @db.ObjectId
+  threadId         String?       @db.ObjectId
+  authorId         String        @db.ObjectId
+  body             String
+  xPct             Float?
+  yPct             Float?
+  pageIndex        Int?
+  pageUrl          String?
+  elementSelector  String?
+  elementPath      String?
+  textFingerprint  String?
+  status           CommentStatus @default(OPEN)
+  resolvedBy       String?       @db.ObjectId
+  resolvedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  editedAt         DateTime?
+  deletedAt        DateTime?
+
+  document         Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, status])
+  @@index([threadId, createdAt])
+}
+
+model DocumentMember {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  documentId String   @db.ObjectId
+  role       Role
+  invitedBy  String?  @db.ObjectId
+  joinedAt   DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, documentId])
+  @@index([documentId])
+}
+
+model Invite {
+  id         String      @id @default(auto()) @map("_id") @db.ObjectId
+  email      String
+  scopeType  InviteScope
+  scopeId    String      @db.ObjectId
+  scopeIds   String[]    @db.ObjectId
+  role       Role
+  token      String      @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  invitedBy  String      @db.ObjectId
+  createdAt  DateTime    @default(now())
+
+  inviter    User        @relation("Inviter", fields: [invitedBy], references: [id], onDelete: Cascade)
+
+  @@index([email, acceptedAt])
+  @@index([scopeType, scopeId])
+}
+
+model Notification {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String           @db.ObjectId
+  type        NotificationType
+  actorId     String           @db.ObjectId
+  orgId       String           @db.ObjectId
+  projectId   String           @db.ObjectId
+  documentId  String           @db.ObjectId
+  commentId   String           @db.ObjectId
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([userId, createdAt])
+}
+
+model NotificationPreference {
+  id                       String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId                   String   @db.ObjectId
+  orgId                    String   @db.ObjectId
+  notifyOnCommentCreated   Boolean  @default(true)
+  notifyOnCommentResolved  Boolean  @default(true)
+  updatedAt                DateTime @updatedAt
+  createdAt                DateTime @default(now())
+
+  user                     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+}

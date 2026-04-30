@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.DS_Store
+*.pem
+npm-debug.log*
+.env*
+!.env.example
+.vercel
+*.tsbuildinfo
