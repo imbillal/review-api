@@ -2,6 +2,7 @@ import {Router} from 'express';
 import {db} from '@/db';
 import {sendError, asyncHandler} from '@/lib/api';
 import {getUserId} from '@/middleware/auth';
+import {verifyAuthToken} from '@/lib/jwt';
 import {subscribe} from '@/lib/notify';
 
 const router: Router = Router();
@@ -131,7 +132,16 @@ router.post(
 router.get(
 	'/stream',
 	asyncHandler(async (req, res) => {
-		const userId = await getUserId(req);
+		// EventSource can't send custom headers, so accept a query-string token
+		// here in addition to the Authorization header that other routes use.
+		let userId = await getUserId(req);
+		if (!userId) {
+			const queryToken = typeof req.query.token === 'string' ? req.query.token : null;
+			if (queryToken) {
+				const payload = verifyAuthToken(queryToken);
+				userId = payload?.sub ?? null;
+			}
+		}
 		if (!userId)
 			return sendError(res, 'UNAUTHORIZED', 'Not authenticated', 401);
 

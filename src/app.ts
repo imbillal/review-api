@@ -2,6 +2,7 @@ import "dotenv/config";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import auth from "@/routes/auth";
 import orgs from "@/routes/orgs";
 import projects from "@/routes/projects";
 import invites from "@/routes/invites";
@@ -36,6 +37,7 @@ export function createApp(): Express {
     res.json({ ok: true, service: "pinion-api" });
   });
 
+  app.use("/auth", auth);
   app.use("/orgs", orgs);
   app.use("/projects", projects);
   app.use("/invites", invites);

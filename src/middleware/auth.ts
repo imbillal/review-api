@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
-import { decode } from "@auth/core/jwt";
 import { sendError } from "@/lib/api";
 import { resolveAccess, roleMeets, type AccessScope } from "@/lib/access";
 import type { Role } from "@/db";
+import { verifyAuthToken } from "@/lib/jwt";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -13,44 +13,17 @@ declare global {
   }
 }
 
-// Auth.js v5 cookie names. Salt for decode() must match the cookie name.
-const COOKIES: Array<{ name: string; secure: boolean }> = [
-  { name: "authjs.session-token", secure: false },
-  { name: "__Secure-authjs.session-token", secure: true },
-  { name: "next-auth.session-token", secure: false },
-  { name: "__Secure-next-auth.session-token", secure: true },
-];
-
-function findCookie(req: Request): { value: string; salt: string } | null {
-  for (const c of COOKIES) {
-    const v = req.cookies?.[c.name];
-    if (v) return { value: v, salt: c.name };
-  }
-  return null;
+function getBearer(req: Request): string | null {
+  const h = req.headers.authorization;
+  if (!h || !h.startsWith("Bearer ")) return null;
+  return h.slice("Bearer ".length).trim();
 }
 
 export async function getUserId(req: Request): Promise<string | null> {
-  const cookie = findCookie(req);
-  if (!cookie) return null;
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) {
-    console.error("[api auth] NEXTAUTH_SECRET not set");
-    return null;
-  }
-  try {
-    const payload = await decode({
-      token: cookie.value,
-      secret,
-      salt: cookie.salt,
-    });
-    if (!payload) return null;
-    // JWT callback in web puts the user id as `uid`.
-    const uid = (payload as { uid?: string; sub?: string }).uid ?? (payload as { sub?: string }).sub;
-    return uid ?? null;
-  } catch (err) {
-    console.warn("[api auth] token decode failed:", (err as Error).message);
-    return null;
-  }
+  const token = getBearer(req);
+  if (!token) return null;
+  const payload = verifyAuthToken(token);
+  return payload?.sub ?? null;
 }
 
 export function requireAuth() {
