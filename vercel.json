@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=true npm install",
+  "installCommand": "PUPPETEER_SKIP_DOWNLOAD=true npm install",
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
