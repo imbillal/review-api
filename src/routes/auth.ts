@@ -6,6 +6,7 @@ import { sendError, parseBody, handlePrismaError, asyncHandler } from "@/lib/api
 import { signAuthToken } from "@/lib/jwt";
 import { requireAuth } from "@/middleware/auth";
 import { slugify, ensureUniqueSlug } from "@/lib/slug";
+import { presignPut, publicUrlFor, objectExists, deleteByUrl } from "@/lib/storage";
 
 const router: Router = Router();
 
@@ -158,6 +159,71 @@ router.post(
     const newHash = await bcrypt.hash(parsed.data.newPassword, 12);
     await db.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
     res.json({ ok: true });
+  }),
+);
+
+// Avatar upload — two-step presigned-URL flow (mirrors documents/upload-*).
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_ACCEPTED_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+const avatarPresignSchema = z.object({
+  filename: z.string().min(1).max(200),
+  contentType: z.string().min(1).max(100),
+  sizeBytes: z.number().int().positive().max(AVATAR_MAX_BYTES),
+});
+router.post(
+  "/me/avatar-upload-presign",
+  requireAuth(),
+  asyncHandler(async (req, res) => {
+    const parsed = parseBody(req.body, avatarPresignSchema);
+    if (!parsed.ok)
+      return sendError(res, "VALIDATION_FAILED", "Invalid body", 422, parsed.details);
+    const { filename, contentType, sizeBytes } = parsed.data;
+    if (!AVATAR_ACCEPTED_TYPES.has(contentType)) {
+      return sendError(res, "WRONG_TYPE", "Only PNG, JPEG, WebP, or GIF allowed", 415);
+    }
+    if (sizeBytes > AVATAR_MAX_BYTES) {
+      return sendError(res, "TOO_LARGE", "Image must be 5MB or smaller", 413);
+    }
+    const presigned = await presignPut(
+      `pinion/avatars/${req.userId!}`,
+      filename,
+      contentType,
+    );
+    res.json(presigned);
+  }),
+);
+
+const avatarFinalizeSchema = z.object({ key: z.string().min(1) });
+router.post(
+  "/me/avatar-upload-finalize",
+  requireAuth(),
+  asyncHandler(async (req, res) => {
+    const parsed = parseBody(req.body, avatarFinalizeSchema);
+    if (!parsed.ok)
+      return sendError(res, "VALIDATION_FAILED", "Invalid body", 422, parsed.details);
+    if (!(await objectExists(parsed.data.key))) {
+      return sendError(res, "UPLOAD_NOT_FOUND", "Uploaded object not found", 400);
+    }
+    const previous = await db.user.findUnique({
+      where: { id: req.userId! },
+      select: { avatarUrl: true },
+    });
+    const newUrl = publicUrlFor(parsed.data.key);
+    const updated = await db.user.update({
+      where: { id: req.userId! },
+      data: { avatarUrl: newUrl },
+      select: { id: true, name: true, email: true, avatarUrl: true },
+    });
+    if (previous?.avatarUrl && previous.avatarUrl !== newUrl) {
+      await deleteByUrl(previous.avatarUrl);
+    }
+    res.json(updated);
   }),
 );
 

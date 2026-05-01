@@ -7,6 +7,7 @@ import { requireAuth, requireAccess, getUserId } from "@/middleware/auth";
 import { resolveAccess, roleMeets } from "@/lib/access";
 import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
+import { deleteByUrls } from "@/lib/storage";
 
 const router: Router = Router();
 const createSchema = z.object({ orgId: z.string(), name: z.string().min(1).max(120) });
@@ -113,7 +114,17 @@ router.delete(
   "/:projectId",
   requireAccess("ADMIN", (req) => ({ kind: "project", projectId: req.params.projectId! })),
   asyncHandler(async (req, res) => {
-    await db.project.delete({ where: { id: req.params.projectId! } });
+    const projectId = req.params.projectId!;
+    const docs = await db.document.findMany({
+      where: { projectId },
+      select: { storageKey: true, thumbnailKey: true, bundleKey: true },
+    });
+    const urls: Array<string | null> = [];
+    for (const d of docs) {
+      urls.push(d.storageKey ?? null, d.thumbnailKey ?? null, d.bundleKey ?? null);
+    }
+    await deleteByUrls(urls);
+    await db.project.delete({ where: { id: projectId } });
     res.json({ ok: true });
   }),
 );

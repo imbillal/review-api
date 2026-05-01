@@ -1,17 +1,23 @@
 import { Router } from "express";
-import multer from "multer";
 import { z } from "zod";
 import { db } from "@/db";
 import { sendError, parseBody, asyncHandler, handlePrismaError } from "@/lib/api";
 import { requireAuth, getUserId } from "@/middleware/auth";
-import { uploadPdfBuffer, deleteAsset } from "@/lib/storage";
+import {
+  presignPut,
+  publicUrlFor,
+  objectExists,
+  deleteByUrls,
+} from "@/lib/storage";
 import { captureUrl } from "@/lib/capture";
 import { resolveAccess } from "@/lib/access";
 import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
 
 const router: Router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const ACCEPTED_PDF_TYPES = new Set(["application/pdf", "application/x-pdf"]);
 
 const renameSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -65,39 +71,81 @@ router.get(
   }),
 );
 
-// Upload endpoint: multipart form with `file` + `projectId` + optional `title`
+// Step 1: client requests a presigned URL to PUT the file directly to S3.
+const presignSchema = z.object({
+  projectId: z.string().min(1),
+  filename: z.string().min(1).max(200),
+  contentType: z.string().min(1).max(100),
+  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+});
 router.post(
-  "/upload",
+  "/upload-presign",
   requireAuth(),
-  upload.single("file"),
   asyncHandler(async (req, res) => {
-    const file = req.file;
-    if (!file) return sendError(res, "MISSING_FILE", "No file uploaded", 400);
-    const projectId = typeof req.body?.projectId === "string" ? req.body.projectId : null;
-    if (!projectId) return sendError(res, "MISSING_PARAM", "projectId required", 400);
+    const parsed = parseBody(req.body, presignSchema);
+    if (!parsed.ok)
+      return sendError(res, "VALIDATION_FAILED", "Invalid body", 422, parsed.details);
+    const { projectId, filename, contentType, sizeBytes } = parsed.data;
 
     const role = await resolveAccess(req.userId!, { kind: "project", projectId });
     if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
 
-    if (file.mimetype !== "application/pdf" && !file.originalname.toLowerCase().endsWith(".pdf")) {
+    if (!ACCEPTED_PDF_TYPES.has(contentType) && !filename.toLowerCase().endsWith(".pdf")) {
       return sendError(res, "WRONG_TYPE", "Only PDF files supported", 400);
     }
+    if (sizeBytes > MAX_UPLOAD_BYTES) {
+      return sendError(res, "TOO_LARGE", "File exceeds 50 MB", 413);
+    }
 
-    const title =
-      (typeof req.body?.title === "string" && req.body.title.trim()) ||
-      file.originalname.replace(/\.pdf$/i, "");
+    const presigned = await presignPut(`pinion/documents/${projectId}`, filename, contentType);
+    res.json(presigned);
+  }),
+);
+
+// Step 2: after the client successfully PUTs the file, finalize by creating
+// the Document row. We HEAD-check the key first to make sure something is
+// actually there.
+const finalizeSchema = z.object({
+  projectId: z.string().min(1),
+  key: z.string().min(1),
+  title: z.string().min(1).max(200).optional(),
+  filename: z.string().min(1).max(200).optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  mimeType: z.string().min(1).max(100).optional(),
+  pageCount: z.number().int().positive().optional(),
+});
+router.post(
+  "/upload-finalize",
+  requireAuth(),
+  asyncHandler(async (req, res) => {
+    const parsed = parseBody(req.body, finalizeSchema);
+    if (!parsed.ok)
+      return sendError(res, "VALIDATION_FAILED", "Invalid body", 422, parsed.details);
+    const { projectId, key, title, filename, sizeBytes, mimeType, pageCount } = parsed.data;
+
+    const role = await resolveAccess(req.userId!, { kind: "project", projectId });
+    if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
+
+    // Make sure the upload actually landed.
+    if (!(await objectExists(key))) {
+      return sendError(res, "UPLOAD_NOT_FOUND", "Uploaded object not found in storage", 400);
+    }
+
+    const finalTitle =
+      (title && title.trim()) ||
+      (filename ? filename.replace(/\.pdf$/i, "") : null) ||
+      "Untitled";
 
     try {
-      const asset = await uploadPdfBuffer(file.buffer, file.originalname);
       const doc = await db.document.create({
         data: {
           projectId,
           type: "PDF",
-          title,
-          storageKey: asset.url,
-          mimeType: "application/pdf",
-          sizeBytes: asset.bytes,
-          pageCount: asset.pages ?? null,
+          title: finalTitle,
+          storageKey: publicUrlFor(key),
+          mimeType: mimeType ?? "application/pdf",
+          sizeBytes: sizeBytes ?? null,
+          pageCount: pageCount ?? null,
           snapshotStatus: "READY",
           createdById: req.userId!,
         },
@@ -105,8 +153,7 @@ router.post(
       res.status(201).json(doc);
     } catch (e) {
       if (handlePrismaError(e, res)) return;
-      console.error("[upload] failed", e);
-      res.status(500).json({ error: { code: "UPLOAD_FAILED", message: "Upload failed" } });
+      throw e;
     }
   }),
 );
@@ -256,14 +303,7 @@ router.delete(
       where: { id: doc.id },
       data: { deletedAt: new Date() },
     });
-    if (doc.storageKey) {
-      try {
-        const match = doc.storageKey.match(/\/upload\/(?:v\d+\/)?(.+)$/);
-        if (match?.[1]) await deleteAsset(match[1]);
-      } catch (e) {
-        console.warn("[delete] cloudinary cleanup failed", (e as Error).message);
-      }
-    }
+    await deleteByUrls([doc.storageKey, doc.thumbnailKey, doc.bundleKey]);
     res.json({ ok: true });
   }),
 );

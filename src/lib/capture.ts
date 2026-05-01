@@ -1,6 +1,6 @@
 import { chromium } from "playwright";
-import { v2 as cloudinary } from "cloudinary";
 import { Buffer } from "node:buffer";
+import { uploadBuffer } from "@/lib/storage";
 
 export type CaptureResult = {
   thumbnailUrl: string;
@@ -34,14 +34,15 @@ export async function captureUrl(url: string): Promise<CaptureResult> {
       quality: 75,
       clip: { x: 0, y: 0, width: 1440, height: 900 },
     });
-    const thumbUpload = await uploadBuffer(thumbBuffer, {
-      resource_type: "image",
-      folder: "pinion/websites",
-      format: "jpg",
-    });
+    const thumb = await uploadBuffer(
+      Buffer.from(thumbBuffer),
+      "pinion/websites",
+      `thumb-${Date.now()}.jpg`,
+      "image/jpeg",
+    );
 
     return {
-      thumbnailUrl: thumbUpload.secure_url,
+      thumbnailUrl: thumb.publicUrl,
       title,
       viewportWidth: 1440,
       viewportHeight: 900,
@@ -262,24 +263,3 @@ const OVERLAY_RUNTIME_UNUSED = `
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _unusedRef = OVERLAY_RUNTIME_UNUSED;
-
-async function uploadBuffer(
-  buffer: Buffer,
-  opts: { resource_type: "raw" | "image"; folder: string; public_id?: string; format?: string },
-): Promise<{ secure_url: string; public_id: string }> {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: opts.resource_type,
-        folder: opts.folder,
-        format: opts.format,
-        unique_filename: true,
-      },
-      (err, result) => {
-        if (err || !result) return reject(err ?? new Error("Upload failed"));
-        resolve({ secure_url: result.secure_url, public_id: result.public_id });
-      },
-    );
-    stream.end(buffer);
-  });
-}
