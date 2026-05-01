@@ -13,11 +13,20 @@ import { captureUrl } from "@/lib/capture";
 import { resolveAccess } from "@/lib/access";
 import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
+import { authenticateGuestToken } from "@/routes/guest-links";
 
 const router: Router = Router();
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const ACCEPTED_PDF_TYPES = new Set(["application/pdf", "application/x-pdf"]);
+const ACCEPTED_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
+const IMAGE_EXTS = /\.(png|jpe?g|webp|gif)$/i;
 
 const renameSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -39,11 +48,38 @@ router.get(
   "/",
   asyncHandler(async (req, res) => {
     const userId = await getUserId(req);
-    if (!userId) return sendError(res, "UNAUTHORIZED", "Not authenticated", 401);
+    const guestToken = typeof req.query.guestToken === "string" ? req.query.guestToken : null;
+    const guestPassword = typeof req.query.guestPassword === "string" ? req.query.guestPassword : undefined;
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : null;
     if (!projectId) return sendError(res, "MISSING_PARAM", "projectId required", 400);
-    const role = await resolveAccess(userId, { kind: "project", projectId });
-    if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
+
+    if (userId) {
+      const role = await resolveAccess(userId, { kind: "project", projectId });
+      if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
+    } else if (guestToken) {
+      const auth = await authenticateGuestToken(guestToken, guestPassword);
+      if (!auth.ok) return sendError(res, auth.code, "Guest access denied", 401);
+      if (auth.link.projectId !== projectId) {
+        return sendError(res, "FORBIDDEN", "Project not in shared link", 403);
+      }
+      if (auth.link.documentId) {
+        const doc = await db.document.findUnique({ where: { id: auth.link.documentId } });
+        if (!doc || doc.deletedAt) return sendError(res, "NOT_FOUND", "Document not found", 404);
+        const docComments = await db.comment.findMany({
+          where: { documentId: doc.id },
+          select: { status: true, deletedAt: true },
+        });
+        const counts = { open: 0, resolved: 0 };
+        for (const c of docComments) {
+          if (c.deletedAt != null) continue;
+          if (c.status === "OPEN") counts.open += 1;
+          else if (c.status === "RESOLVED") counts.resolved += 1;
+        }
+        return res.json([{ ...doc, commentCounts: counts }]);
+      }
+    } else {
+      return sendError(res, "UNAUTHORIZED", "Not authenticated", 401);
+    }
     const rows = await db.document.findMany({
       where: {
         projectId,
@@ -90,8 +126,10 @@ router.post(
     const role = await resolveAccess(req.userId!, { kind: "project", projectId });
     if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
 
-    if (!ACCEPTED_PDF_TYPES.has(contentType) && !filename.toLowerCase().endsWith(".pdf")) {
-      return sendError(res, "WRONG_TYPE", "Only PDF files supported", 400);
+    const isPdf = ACCEPTED_PDF_TYPES.has(contentType) || filename.toLowerCase().endsWith(".pdf");
+    const isImage = ACCEPTED_IMAGE_TYPES.has(contentType) || IMAGE_EXTS.test(filename);
+    if (!isPdf && !isImage) {
+      return sendError(res, "WRONG_TYPE", "Only PDF and image files supported", 400);
     }
     if (sizeBytes > MAX_UPLOAD_BYTES) {
       return sendError(res, "TOO_LARGE", "File exceeds 50 MB", 413);
@@ -131,21 +169,25 @@ router.post(
       return sendError(res, "UPLOAD_NOT_FOUND", "Uploaded object not found in storage", 400);
     }
 
+    const isImage =
+      (mimeType && ACCEPTED_IMAGE_TYPES.has(mimeType)) ||
+      (filename && IMAGE_EXTS.test(filename));
+
     const finalTitle =
       (title && title.trim()) ||
-      (filename ? filename.replace(/\.pdf$/i, "") : null) ||
+      (filename ? filename.replace(/\.(pdf|png|jpe?g|webp|gif)$/i, "") : null) ||
       "Untitled";
 
     try {
       const doc = await db.document.create({
         data: {
           projectId,
-          type: "PDF",
+          type: isImage ? "IMAGE" : "PDF",
           title: finalTitle,
           storageKey: publicUrlFor(key),
-          mimeType: mimeType ?? "application/pdf",
+          mimeType: mimeType ?? (isImage ? "image/png" : "application/pdf"),
           sizeBytes: sizeBytes ?? null,
-          pageCount: pageCount ?? null,
+          pageCount: isImage ? 1 : (pageCount ?? null),
           snapshotStatus: "READY",
           createdById: req.userId!,
         },
@@ -249,12 +291,30 @@ router.get(
   "/:documentId",
   asyncHandler(async (req, res) => {
     const userId = await getUserId(req);
-    if (!userId) return sendError(res, "UNAUTHORIZED", "Not authenticated", 401);
+    const guestToken = typeof req.query.guestToken === "string" ? req.query.guestToken : null;
+    const guestPassword = typeof req.query.guestPassword === "string" ? req.query.guestPassword : undefined;
     const doc = await db.document.findUnique({ where: { id: req.params.documentId! } });
     if (!doc || doc.deletedAt) return sendError(res, "NOT_FOUND", "Document not found", 404);
-    const role = await resolveAccess(userId, { kind: "document", documentId: doc.id });
-    if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
-    res.json(doc);
+
+    let viewerRole: "ADMIN" | "REVIEWER" | null = null;
+    if (userId) {
+      const role = await resolveAccess(userId, { kind: "document", documentId: doc.id });
+      if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
+      viewerRole = role;
+    } else if (guestToken) {
+      const auth = await authenticateGuestToken(guestToken, guestPassword);
+      if (!auth.ok) return sendError(res, auth.code, "Guest access denied", 401);
+      if (auth.link.documentId) {
+        if (auth.link.documentId !== doc.id) {
+          return sendError(res, "FORBIDDEN", "Document not shared by this link", 403);
+        }
+      } else if (auth.link.projectId !== doc.projectId) {
+        return sendError(res, "FORBIDDEN", "Document not in shared project", 403);
+      }
+    } else {
+      return sendError(res, "UNAUTHORIZED", "Not authenticated", 401);
+    }
+    res.json({ ...doc, viewerRole });
   }),
 );
 
@@ -299,11 +359,20 @@ router.delete(
     const role = await resolveAccess(userId, { kind: "document", documentId: doc.id });
     if (role !== "ADMIN") return sendError(res, "FORBIDDEN", "Only admins can delete", 403);
 
+    const commentAttachments = await db.comment.findMany({
+      where: { documentId: doc.id, attachmentUrl: { not: null } },
+      select: { attachmentUrl: true },
+    });
     await db.document.update({
       where: { id: doc.id },
       data: { deletedAt: new Date() },
     });
-    await deleteByUrls([doc.storageKey, doc.thumbnailKey, doc.bundleKey]);
+    await deleteByUrls([
+      doc.storageKey,
+      doc.thumbnailKey,
+      doc.bundleKey,
+      ...commentAttachments.map((c) => c.attachmentUrl),
+    ]);
     res.json({ ok: true });
   }),
 );

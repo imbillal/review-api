@@ -8,6 +8,7 @@ import projects from "@/routes/projects";
 import invites from "@/routes/invites";
 import documents from "@/routes/documents";
 import comments from "@/routes/comments";
+import guestLinks from "@/routes/guest-links";
 import notifications from "@/routes/notifications";
 import notificationPrefs from "@/routes/notification-prefs";
 import proxy from "@/routes/proxy";
@@ -43,6 +44,7 @@ export function createApp(): Express {
   app.use("/invites", invites);
   app.use("/documents", documents);
   app.use("/comments", comments);
+  app.use("/guest-links", guestLinks);
   app.use("/notifications", notifications);
   app.use("/notification-prefs", notificationPrefs);
   app.use("/proxy", proxy);

@@ -21,6 +21,7 @@ enum InviteScope {
 enum DocumentType {
   PDF
   WEBSITE
+  IMAGE
 }
 
 enum SnapshotStatus {
@@ -154,9 +155,30 @@ model Project {
   org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   members     ProjectMember[]
   documents   Document[]
+  guestLinks  GuestLink[]
 
   @@unique([orgId, slug])
   @@index([orgId])
+}
+
+model GuestLink {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  projectId       String    @db.ObjectId
+  documentId      String?   @db.ObjectId
+  token           String    @unique
+  passwordHash    String?
+  expiresAt       DateTime?
+  maxUses         Int?
+  usesCount       Int       @default(0)
+  allowComments   Boolean   @default(true)
+  accessControl   String    @default("ANYONE")
+  createdById     String    @db.ObjectId
+  createdAt       DateTime  @default(now())
+
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([documentId])
 }
 
 model ProjectMember {
@@ -209,6 +231,9 @@ model Comment {
   threadId         String?       @db.ObjectId
   authorId         String        @db.ObjectId
   body             String
+  attachmentUrl    String?
+  viewportWidth    Int?
+  viewportHeight   Int?
   xPct             Float?
   yPct             Float?
   pageIndex        Int?
