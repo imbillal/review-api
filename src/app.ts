@@ -11,10 +11,6 @@ import comments from "@/routes/comments";
 import guestLinks from "@/routes/guest-links";
 import notifications from "@/routes/notifications";
 import notificationPrefs from "@/routes/notification-prefs";
-import proxy from "@/routes/proxy";
-import render from "@/routes/render";
-import dom from "@/routes/dom";
-import assetProxy from "@/routes/asset-proxy";
 
 export function createApp(): Express {
   const app = express();
@@ -49,10 +45,6 @@ export function createApp(): Express {
   app.use("/guest-links", guestLinks);
   app.use("/notifications", notifications);
   app.use("/notification-prefs", notificationPrefs);
-  app.use("/proxy", proxy);
-  app.use("/render", render);
-  app.use("/dom", dom);
-  app.use("/asset-proxy", assetProxy);
 
   app.use((req, res) => {
     res.status(404).json({ error: { code: "NOT_FOUND", message: `Route ${req.method} ${req.path} not found` } });
