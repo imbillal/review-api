@@ -14,6 +14,8 @@ import { resolveAccess } from "@/lib/access";
 import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
 import { authenticateGuestToken } from "@/routes/guest-links";
+import { validateProxyTarget } from "@/lib/ssrf";
+import { generateSubdomain } from "@/lib/subdomain";
 
 const router: Router = Router();
 
@@ -209,6 +211,11 @@ router.post(
     if (!parsed.ok) return sendError(res, "VALIDATION_FAILED", "Invalid body", 422, parsed.details);
     const { projectId, url, title } = parsed.data;
 
+    const target = validateProxyTarget(url);
+    if (!target.ok) {
+      return sendError(res, "INVALID_URL", target.reason, 422);
+    }
+
     const role = await resolveAccess(req.userId!, { kind: "project", projectId });
     if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
 
@@ -220,6 +227,14 @@ router.post(
         sourceUrl: url,
         snapshotStatus: "PENDING",
         createdById: req.userId!,
+      },
+    });
+
+    await db.proxySite.create({
+      data: {
+        documentId: doc.id,
+        subdomain: generateSubdomain(),
+        targetOrigin: target.origin,
       },
     });
 
@@ -366,6 +381,10 @@ router.delete(
     await db.document.update({
       where: { id: doc.id },
       data: { deletedAt: new Date() },
+    });
+    await db.proxySite.updateMany({
+      where: { documentId: doc.id },
+      data: { enabled: false },
     });
     await deleteByUrls([
       doc.storageKey,
