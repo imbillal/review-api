@@ -4,8 +4,9 @@
 services:
   - type: web
     name: review-api
+    repo: https://github.com/imbillal/review-api
     runtime: node
-    plan: starter
+    plan: free
     region: oregon
     branch: main
     buildCommand: npm install --include=dev && npm run build
