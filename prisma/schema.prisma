@@ -221,8 +221,20 @@ model Document {
   project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   members        DocumentMember[]
   comments       Comment[]
+  proxySite      ProxySite?
 
   @@index([projectId])
+}
+
+model ProxySite {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  documentId   String   @unique @db.ObjectId
+  subdomain    String   @unique
+  targetOrigin String
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 }
 
 model Comment {
