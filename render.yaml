@@ -1,0 +1,39 @@
+# Render Blueprint — review-api
+# Launch: Render dashboard -> New -> Blueprint -> connect this repo.
+# Env vars marked `sync: false` are entered at launch and are not stored in git.
+services:
+  - type: web
+    name: review-api
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET
+        sync: false
