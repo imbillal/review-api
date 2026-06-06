@@ -9,7 +9,7 @@ import {
   objectExists,
   deleteByUrls,
 } from "@/lib/storage";
-import { captureUrl } from "@/lib/capture";
+import { enqueueCapture } from "@/lib/capture-queue";
 import { resolveAccess } from "@/lib/access";
 import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
@@ -238,29 +238,11 @@ router.post(
       },
     });
 
-    try {
-      const result = await captureUrl(url);
-      const updated = await db.document.update({
-        where: { id: doc.id },
-        data: {
-          title: title ?? result.title,
-          thumbnailKey: result.thumbnailUrl,
-          viewportWidth: result.viewportWidth,
-          viewportHeight: result.viewportHeight,
-          snapshotStatus: "READY",
-          lastCapturedAt: new Date(),
-        },
-      });
-      res.status(201).json(updated);
-    } catch (e) {
-      const msg = (e as Error).message ?? "capture failed";
-      console.error("[capture]", msg);
-      await db.document.update({
-        where: { id: doc.id },
-        data: { snapshotStatus: "FAILED", captureError: msg },
-      });
-      return sendError(res, "CAPTURE_FAILED", msg, 500);
-    }
+    // Return immediately — the thumbnail is captured in the background. The
+    // ProxySite already exists, so the builder works right away; the doc stays
+    // PENDING ("Capturing…") until the queue flips it to READY/FAILED.
+    enqueueCapture(doc.id);
+    res.status(201).json(doc);
   }),
 );
 
@@ -276,29 +258,13 @@ router.post(
     const role = await resolveAccess(userId, { kind: "document", documentId: doc.id });
     if (role !== "ADMIN") return sendError(res, "FORBIDDEN", "Admin required", 403);
 
-    await db.document.update({
+    const updated = await db.document.update({
       where: { id: doc.id },
       data: { snapshotStatus: "PENDING", captureError: null },
     });
-    try {
-      const result = await captureUrl(doc.sourceUrl);
-      const updated = await db.document.update({
-        where: { id: doc.id },
-        data: {
-          thumbnailKey: result.thumbnailUrl,
-          snapshotStatus: "READY",
-          lastCapturedAt: new Date(),
-        },
-      });
-      res.json(updated);
-    } catch (e) {
-      const msg = (e as Error).message ?? "capture failed";
-      await db.document.update({
-        where: { id: doc.id },
-        data: { snapshotStatus: "FAILED", captureError: msg },
-      });
-      return sendError(res, "CAPTURE_FAILED", msg, 500);
-    }
+    // Recapture in the background; return the PENDING doc immediately.
+    enqueueCapture(doc.id);
+    res.json(updated);
   }),
 );
 
