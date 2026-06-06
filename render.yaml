@@ -1,6 +1,15 @@
 # Render Blueprint — review-api
 # Launch: Render dashboard -> New -> Blueprint -> connect this repo.
 # Env vars marked `sync: false` are entered at launch and are not stored in git.
+#
+# PREREQUISITES (operational, not in this file):
+#   1. MongoDB Atlas Network Access must allow Render egress (add 0.0.0.0/0 or
+#      Render's static outbound IPs) so DATABASE_URL is reachable.
+#   2. NEXTAUTH_SECRET must be IDENTICAL to the web app's NEXTAUTH_SECRET — the
+#      API verifies session tokens the web app signs.
+#   3. Render injects PORT automatically; the app already binds process.env.PORT.
+#   4. Free plan cold-starts after ~15 min idle. Use a paid instance for
+#      anything user-facing.
 services:
   - type: web
     name: review-api
@@ -18,10 +27,13 @@ services:
         value: "20"
       - key: DATABASE_URL
         sync: false
+      # Must match NEXTAUTH_SECRET in the web app (session-token verification).
       - key: NEXTAUTH_SECRET
         sync: false
+      # Web app origin used to build invite links, e.g. https://app.example.com.
       - key: APP_URL
         sync: false
+      # Allowed web origin (CORS), e.g. https://app.example.com.
       - key: WEB_ORIGIN
         sync: false
       - key: EMAIL_FROM
@@ -35,6 +47,6 @@ services:
       - key: S3_SECRET_ACCESS_KEY
         sync: false
       - key: S3_REGION
-        sync: false
+        value: "us-east-1"
       - key: S3_BUCKET
         sync: false
