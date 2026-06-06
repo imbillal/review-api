@@ -15,7 +15,8 @@ import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
 import { authenticateGuestToken } from "@/routes/guest-links";
 import { validateProxyTarget } from "@/lib/ssrf";
-import { generateSubdomain } from "@/lib/subdomain";
+import { deriveSubdomainBase, createWithUniqueSubdomain } from "@/lib/subdomain";
+import { Prisma } from "@/db";
 
 const router: Router = Router();
 
@@ -230,13 +231,17 @@ router.post(
       },
     });
 
-    await db.proxySite.create({
-      data: {
-        documentId: doc.id,
-        subdomain: generateSubdomain(),
-        targetOrigin: target.origin,
-      },
-    });
+    // Derive a readable subdomain from the target host (billal.dev -> billal-dev),
+    // retrying with a random suffix if it's already taken. doc.id is fresh, so a
+    // P2002 on this insert is a subdomain collision.
+    await createWithUniqueSubdomain(
+      deriveSubdomainBase(target.origin),
+      (subdomain) =>
+        db.proxySite
+          .create({ data: { documentId: doc.id, subdomain, targetOrigin: target.origin } })
+          .then(() => undefined),
+      (e) => e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002",
+    );
 
     // Return immediately — the thumbnail is captured in the background. The
     // ProxySite already exists, so the builder works right away; the doc stays
