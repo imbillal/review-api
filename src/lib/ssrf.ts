@@ -23,6 +23,74 @@ function isPrivateIPv6(host: string): boolean {
   return false;
 }
 
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+/**
+ * Resolve the canonical origin a target actually serves from by following its
+ * redirects (e.g. apex `https://tradogram.com` → `https://www.tradogram.com`).
+ *
+ * The proxy only rewrites *same-origin* redirects, so if the stored target
+ * origin permanently redirects to a sibling host (apex↔www), the framed iframe
+ * would be sent to the un-proxied real site and break. Storing the post-redirect
+ * origin instead means the proxy always fetches a host that doesn't redirect away.
+ *
+ * Every hop is re-validated with {@link validateProxyTarget}; a redirect into
+ * unsafe space (private/loopback) is refused and the last safe origin is kept.
+ * On any network/timeout error it falls back to the input origin — never worse
+ * than today's behaviour.
+ */
+export async function resolveCanonicalTarget(
+  rawUrl: string,
+  opts: { maxHops?: number; timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<ProxyTargetResult> {
+  const initial = validateProxyTarget(rawUrl);
+  if (!initial.ok) return initial;
+
+  const maxHops = opts.maxHops ?? 5;
+  const timeoutMs = opts.timeoutMs ?? 6000;
+  const doFetch = opts.fetchImpl ?? fetch;
+
+  let origin = initial.origin;
+  let nextUrl = `${origin}/`;
+
+  for (let i = 0; i < maxHops; i++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await doFetch(nextUrl, {
+        method: "GET",
+        redirect: "manual",
+        signal: ac.signal,
+        headers: { "user-agent": BROWSER_UA },
+      });
+    } catch {
+      return { ok: true, origin }; // unreachable/timeout — keep best-known origin
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (res.status < 300 || res.status >= 400) return { ok: true, origin };
+    const loc = res.headers.get("location");
+    if (!loc) return { ok: true, origin };
+
+    let abs: URL;
+    try {
+      abs = new URL(loc, nextUrl);
+    } catch {
+      return { ok: true, origin };
+    }
+    const checked = validateProxyTarget(abs.toString());
+    if (!checked.ok) return { ok: true, origin }; // don't follow into unsafe space
+    if (abs.origin === origin) return { ok: true, origin }; // same-origin (e.g. /→/en) — host is canonical
+    origin = abs.origin;
+    nextUrl = abs.toString();
+  }
+  return { ok: true, origin };
+}
+
 /** Validate a URL submitted as a proxy target. Name- and literal-IP-based. */
 export function validateProxyTarget(rawUrl: string): ProxyTargetResult {
   let url: URL;

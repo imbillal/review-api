@@ -14,7 +14,7 @@ import { resolveAccess } from "@/lib/access";
 import { generateToken } from "@/lib/tokens";
 import { sendEmail, inviteEmailHtml } from "@/lib/email";
 import { authenticateGuestToken } from "@/routes/guest-links";
-import { validateProxyTarget } from "@/lib/ssrf";
+import { validateProxyTarget, resolveCanonicalTarget } from "@/lib/ssrf";
 import { deriveSubdomainBase, createWithUniqueSubdomain } from "@/lib/subdomain";
 import { Prisma } from "@/db";
 
@@ -220,6 +220,13 @@ router.post(
     const role = await resolveAccess(req.userId!, { kind: "project", projectId });
     if (!role) return sendError(res, "FORBIDDEN", "Access denied", 403);
 
+    // Canonicalize the origin by following redirects (apex → www etc.). The proxy
+    // only rewrites same-origin redirects, so storing a host that redirects to a
+    // sibling would send the framed iframe to the un-proxied real site. Falls back
+    // to the validated input origin on any error.
+    const canonical = await resolveCanonicalTarget(url);
+    const targetOrigin = canonical.ok ? canonical.origin : target.origin;
+
     const doc = await db.document.create({
       data: {
         projectId,
@@ -235,10 +242,10 @@ router.post(
     // retrying with a random suffix if it's already taken. doc.id is fresh, so a
     // P2002 on this insert is a subdomain collision.
     await createWithUniqueSubdomain(
-      deriveSubdomainBase(target.origin),
+      deriveSubdomainBase(targetOrigin),
       (subdomain) =>
         db.proxySite
-          .create({ data: { documentId: doc.id, subdomain, targetOrigin: target.origin } })
+          .create({ data: { documentId: doc.id, subdomain, targetOrigin } })
           .then(() => undefined),
       (e) => e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002",
     );
