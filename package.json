@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc && tsc-alias",
-    "start": "node dist/index.js",
+    "start": "PLAYWRIGHT_BROWSERS_PATH=0 node dist/index.js",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "postinstall": "prisma generate && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium",

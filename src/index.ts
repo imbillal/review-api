@@ -1,3 +1,4 @@
+import "./bootstrap-env"; // MUST be first — sets PLAYWRIGHT_BROWSERS_PATH before Playwright is imported
 import app from "@/app";
 
 const PORT = Number(process.env.PORT ?? 3001);
