@@ -18,6 +18,12 @@ export async function captureUrl(url: string): Promise<CaptureResult> {
   if (!/^https?:\/\//i.test(url)) {
     throw new Error("URL must start with http(s)://");
   }
+  // Load the browser from node_modules (PLAYWRIGHT_BROWSERS_PATH=0) — the build's
+  // `postinstall` downloads Chromium there, which is part of the deploy artifact.
+  // Render's default ~/.cache is not reliably carried from build to runtime, which
+  // caused CAPTURE_FAILED ("Executable doesn't exist at .../ms-playwright/..."). The
+  // install step and this runtime path must agree on "0".
+  if (!process.env.PLAYWRIGHT_BROWSERS_PATH) process.env.PLAYWRIGHT_BROWSERS_PATH = "0";
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({
