@@ -18,7 +18,10 @@ services:
     plan: free
     region: oregon
     branch: main
-    buildCommand: npm install --include=dev && npm run build
+    # `playwright install` downloads the Chromium browser binary used by
+    # src/lib/capture.ts (website screenshots). Without it the prod server
+    # fails with CAPTURE_FAILED — the binary is missing from ~/.cache/ms-playwright.
+    buildCommand: npm install --include=dev && npx playwright install chromium && npm run build
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
